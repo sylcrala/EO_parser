@@ -1,6 +1,10 @@
-# scraping tools
+# scraping libraries
 playwright
 playwright_stealth
 
-# parsing tools
-bs4
+# parsing library
+beautifulsoup4
+
+# GUI library
+PySide6
+
