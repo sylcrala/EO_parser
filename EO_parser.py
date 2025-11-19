@@ -25,7 +25,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QTableWidget,
     QTableWidgetItem,
-    QHeaderView
+    QHeaderView,
+    QScrollArea
 )
 
 
@@ -90,18 +91,17 @@ class Database:
         return result
 
 
-class Viewer:
+class Viewer(QMainWindow):
     def __init__(self, database):
         self.database = database
-        self.window = QMainWindow()
-        self.window.setWindowTitle("Executive Orders Database Viewer")
-        self.window.setGeometry(100, 100, 800, 600)
+        self.setWindowTitle("Executive Orders Database Viewer")
+        self.setGeometry(100, 100, 800, 600)
 
         # setup foundation
         self.foundation_widget = QWidget()
         self.foundation_layout = QVBoxLayout()
         self.foundation_widget.setLayout(self.foundation_layout)
-        self.window.setCentralWidget(self.foundation_widget)
+        self.setCentralWidget(self.foundation_widget)
 
         # top bar for search and actions
         self.top_bar = QHBoxLayout()
@@ -125,9 +125,7 @@ class Viewer:
         self.foundation_layout.addWidget(self.results_table)
         self.populate_table()
 
-        self.window.show()
-
-        
+        self.show()
 
     def populate_table(self):
         """Populates the results table with all executive orders from the database"""
@@ -142,10 +140,10 @@ class Viewer:
         """Shows detailed information about a selected executive order"""
         eo = self.database.search_by_id(id)
         if eo:
-            details = f"ID: {eo[0]}\nTitle: {eo[1]}\nDate: {eo[2]}\nContent: {eo[3]}\nURL: {eo[4]}"
-            QMessageBox.information(self.window, "Executive Order Details", details)
+            detail_window = DetailViewer(eo)
+            detail_window.show()
         else:
-            QMessageBox.warning(self.window, "Not Found", "Executive Order not found in the database.")
+            QMessageBox.warning(self, "Not Found", f"No executive order found with ID: {id}")
 
     def perform_search(self):
         """Executes a requested search using the data within the search bar"""
@@ -157,12 +155,47 @@ class Viewer:
             for col_idx, item in enumerate(row_data):
                 self.results_table.setItem(row_idx, col_idx, QTableWidgetItem(str(item)))
 
+class DetailViewer(QWidget):
+    def __init__(self, eo_data):
+        super().__init__() # show as a new window
+        self.eo_id = eo_data["id"]
+        self.eo_title = eo_data["title"]
+        self.eo_date = eo_data["date"]
+        self.eo_content = eo_data["content"]
+        self.eo_url = eo_data["url"]
+
+        self.setWindowTitle(f"{self.eo_title} - Detailed View")
+        self.setGeometry(150, 150, 600, 400)
+        
+        self.setLayout(QVBoxLayout())
+
+        self.title_label = QLabel(f"<b>Title:</b> {self.eo_title}")
+        self.date_label = QLabel(f"<b>Date published/listed:</b> {self.eo_date}")
+        self.url_label = QLabel(f"<b>URL:</b> {self.eo_url}")
+        self.content_area = QScrollArea()
+        self.content_area.setWidgetResizable(True)
+        self.content_widget = QWidget()
+        self.content_layout = QVBoxLayout()
+        self.content_widget.setLayout(self.content_layout)
+        self.content_area.setWidget(self.content_widget)
+        self.content_header = QLabel("<b>Contents:</b>")
+        self.content_text = QTextEdit()
+        self.content_text.setReadOnly(True)
+        self.content_text.setText(self.eo_content)
+        self.content_layout.addWidget(self.content_header)
+        self.content_layout.addWidget(self.content_text)
+
+        self.layout().addWidget(self.title_label)
+        self.layout().addWidget(self.date_label)
+        self.layout().addWidget(self.url_label)
+        self.layout().addWidget(self.content_area)
+
 
 ##*-*## Scraping classes & methods ##*-*##
 class Scraper:
-    def __init__(self):
-        self.debug = False
-        self.safety_delays = False
+    def __init__(self, debug=False, safety_delays=True):
+        self.debug = debug
+        self.safety_delays = safety_delays
 
         self.foundation_url = "https://www.whitehouse.gov/presidential-actions/executive-orders/"
         self.selected_url = None 
@@ -358,9 +391,8 @@ class Scraper:
 ##*-*## Main execution ##*-*##
 def main():
     print("Welcome! The script will now begin scraping executive orders from the White House website; then will launch a GUI viewer that allows you to filter and search the scraped data!")
-    import time
-    time.sleep(3)
-    scraper = Scraper()
+
+    scraper = Scraper(debug=True, safety_delays=True)
     database = Database()
     scraped_eos = scraper.eo_data
     database.raw_eo_data = scraped_eos
@@ -370,7 +402,6 @@ def main():
     app = QApplication(sys.argv)
     viewer = Viewer(database)
     app.exec()
-    viewer.window.show()
 
 
 if __name__ == "__main__":
