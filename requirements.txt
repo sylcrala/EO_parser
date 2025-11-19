@@ -1,0 +1,6 @@
+# scraping tools
+playwright
+playwright_stealth
+
+# parsing tools
+bs4
