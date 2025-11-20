@@ -1,9 +1,8 @@
-# Scraper and Searchable database for Executive Orders
+# Executive Order Searcher
+*Making it easy to search executive orders in bulk*
 
-The goal of this project is to create a simple webscraper and database viewer for all present executive orders listed on whitehouse.gov. I wanted a way to filter and keyword search every EO in bulk, so I figured it would be a good side-project!
+The goal of this project is to create a simple webscraper and database viewer for all present executive orders listed on whitehouse.gov. I wanted a way to filter and keyword search every EO for keywords or phrases, and I figured it would be a good side-project!
 
-
-If anyone else could use something like this too, please feel free to use it however you deem fit!
 
 
 ### Installation
@@ -24,13 +23,21 @@ On your first launch, you'll be faced with an empty table, a search bar, and som
 
 To begin the scraping process and populate the table, click the "Run Scraper" button in the top-right corner, and give it some time to go through the process (watch the launch terminal to see the scraping process in action). The GUI will stop responding during the scraping process, but this is okay (it's working in the background)!
 
+Check settings.py and customize any setting if needed or wanted (change database path, name, enable/disable debug mode, enable/disable safety timers)
+
+
+### Troubleshooting
+If the scraping process is randomly stopping in the middle of the process, try enabing the safety_timers if it's disabled. If it's already enabled and you still see the issue, try customizing the assigned user-agent within Scraper.launch_scraper() and see if that helps! If the issue persists please submit an Issue ticket so I can look into it!
+
 
 ### License
 Feel free to use, modify, distribute, etc, this script however you deem fit! It's licensed under the MIT license so there's no restrictions!
 
 
 ### Support
-If you enjoyed this project and want to support development of other similar projects, please consider sponsoring the project or checking out my other work! 
+Thank you so much for checking out my project!!
+
+If you enjoy my work and want to support development of this or other projects, please consider sponsoring the project or checking out my other work! Also, if you have an idea or request for a new feature, please reach out to me directly or submit an Issue ticket with one of the following labels: "question" or "enhancement"!
 
 
 --
