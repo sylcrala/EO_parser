@@ -1,3 +1,5 @@
 .venv
 /tmp/
 /data/
+__pycache__/
+*.pyc

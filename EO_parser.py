@@ -6,6 +6,7 @@ from playwright_stealth import Stealth
 import sqlite3
 import random
 import asyncio
+import datetime
 import signal
 import sys
 from os import mkdir
@@ -26,22 +27,23 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
-    QScrollArea
+    QScrollArea,
+    QDialog,
+    QStyledItemDelegate
 )
 
-
-
+from settings import config
 
 ##*-*## Database classes & methods ##*-*##
 class Database:
     def __init__(self):
         """Initializes the SQLite database and creates the executive_orders table"""
-        self.db_path = "./data/storage.db"
+        self.db_dir = config["database_dir"]
         self.raw_eo_data = None
         self.added_eos = 0
-        Path("./data").mkdir(parents=True, exist_ok=True)
-
-        self.con = sqlite3.connect(self.db_path)
+        Path(self.db_dir).mkdir(parents=True, exist_ok=True)
+        self.db_path = f"{self.db_dir}{config['database_file']}"
+        self.con = sqlite3.connect(self.db_path, check_same_thread=False)
         try:
             self.con.execute("CREATE TABLE executive_orders(id INTEGER PRIMARY KEY, title TEXT, date TEXT, content TEXT, url TEXT)")
         except sqlite3.OperationalError:
@@ -49,11 +51,13 @@ class Database:
 
     def store_eo(self, eo_data):
         """Used for storing data within the database"""
-        if self.search_by_title(eo_data["title"]):
+        if self.search_by_title(eo_data["title"]) or self.search_by_url(eo_data["url"]) or self.check_exists(eo_data["url"]):
             print(f"EO titled '{eo_data['title']}' already exists in the database. Skipping entry.")
             return  # Skip adding duplicate entry based on title
 
-        id = len(self.raw_eo_data) - self.added_eos
+        cursor = self.con.execute("SELECT MAX(id) FROM executive_orders")
+        max_id = cursor.fetchone()[0]
+        eo_id = (max_id + 1) if max_id is not None else 1
         title = eo_data["title"]
         date = eo_data["date"]
         content = eo_data["content"]
@@ -62,38 +66,88 @@ class Database:
         self.con.execute("""
             INSERT INTO executive_orders VALUES
                         (?, ?, ?, ?, ?)
-        """, (id, title, date, content, url))
+        """, (eo_id, title, date, content, url))
 
         self.added_eos += 1
         self.con.commit() # commit the new entry to the database
 
-    def view_database(self):
+    def full_database(self):
         """Prints out the stored executive orders"""
         cursor = self.con.execute("SELECT * FROM executive_orders")
-        for row in cursor:
-            id = row[0]
-            title = row[1]
-            date = row[2]
-            content = row[3]
-            url = row[4]
-            print(f"\nID: {id}\nTitle: {title}\nDate: {date}\nContent: {content}\nURL: {url}\n\n")
+        rows = cursor.fetchall()
+        return rows
 
-    def search_by_id(self, id):
+    def search_by_id(self, eo_id):
         """Searches the SQLite database for an entry matching the given id"""
-        cursor = self.con.execute(f"SELECT * FROM executive_orders WHERE id={id}")
+        cursor = self.con.execute(f"SELECT * FROM executive_orders WHERE id=?", (eo_id,))
         result = cursor.fetchone()
-        return result
+        if result:
+            return result
+        return None
     
     def search_by_title(self, title):
         """Searches the SQLite database for an entry matching the given title"""
-        cursor = self.con.execute(f"SELECT * FROM executive_orders WHERE title='{title}'")
+        cursor = self.con.execute(f"SELECT * FROM executive_orders WHERE title=?", (title,))
         result = cursor.fetchone()
-        return result
+        if result:
+            return result
+        return None
+    
+    def search_by_url(self, url):
+        """Searches the SQLite database for an entry matching the given url"""
+        cursor = self.con.execute(f"SELECT * FROM executive_orders WHERE url=?", (url,))
+        result = cursor.fetchone()
+        if result:
+            return result
+        return None
+    
+    def get_raw_data_from_title(self, title):
+        """Retrieves the raw executive order data based on the given title"""
+        for entry in self.raw_eo_data:
+            if entry["title"] == title:
+                return entry
+        return None
+    
+    def get_formatted_data_from_id(self, eo_id):
+        """Retrieves the formatted executive order data based on the given id"""
+        cursor = self.con.execute(f"SELECT * FROM executive_orders WHERE id=?", (eo_id,))
+        result = cursor.fetchone()
+        if result:
+            eo_data = {
+                "id": result[0],
+                "title": result[1],
+                "date": result[2],
+                "content": result[3],
+                "url": result[4]
+            }
+            return eo_data
+        return None
+
+    def check_exists(self, url):
+        """Checks if an entry exists within the database based on the given url"""
+        if self.search_by_url(url) is not None:
+            return True
+        return False
+
+    def close(self):
+        """Closes the database connection"""
+        if self.con:
+            self.con.close()
+
+
+##*-*## GUI classes & methods ##*-*##
+class NoElidingDelegate(QStyledItemDelegate):
+    """Custom delegate to prevent text eliding in table cells"""
+    def paint(self, painter, option, index):
+        option.textElideMode = Qt.ElideNone
+        super().paint(painter, option, index)
 
 
 class Viewer(QMainWindow):
     def __init__(self, database):
+        super().__init__()
         self.database = database
+        self.scraper = None
         self.setWindowTitle("Executive Orders Database Viewer")
         self.setGeometry(100, 100, 800, 600)
 
@@ -106,12 +160,21 @@ class Viewer(QMainWindow):
         # top bar for search and actions
         self.top_bar = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Enter criteria...")
+        self.search_input.setPlaceholderText("Enter search criteria...")
         self.search_button = QPushButton("Search")
         self.search_button.clicked.connect(self.perform_search)
+        self.search_input.returnPressed.connect(self.perform_search)
+
+        self.clear_button = QPushButton("Clear search results")
+        self.clear_button.clicked.connect(self.clear_results)
+
+        self.run_scraper_button = QPushButton("Run Scraper")
+        self.run_scraper_button.clicked.connect(self.run_scraper)
 
         self.top_bar.addWidget(self.search_input, stretch=4)
         self.top_bar.addWidget(self.search_button, stretch=1)
+        self.top_bar.addWidget(self.clear_button, stretch=1)
+        self.top_bar.addWidget(self.run_scraper_button, stretch=1)
         self.foundation_layout.addLayout(self.top_bar)
 
         # table for displaying results
@@ -119,45 +182,94 @@ class Viewer(QMainWindow):
 
         self.results_table.setColumnCount(3) # id, title, date
         self.results_table.setHorizontalHeaderLabels(["ID", "Title", "Date"])
-        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.results_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.results_table.setWordWrap(True)
+        self.results_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.results_table.verticalHeader().setVisible(False)
+        self.results_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.results_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.results_table.setItemDelegate(NoElidingDelegate())  # using custom delegate to manually disable text elision (titles would always show as "..." instead of the actual text)
         self.results_table.cellDoubleClicked.connect(lambda row, col: self.show_details(self.results_table.item(row, 0).text()))
+        self.results_table.setSortingEnabled(True)
+        #self.results_table.sortItems(2, Qt.DateFormat)
 
         self.foundation_layout.addWidget(self.results_table)
         self.populate_table()
-
         self.show()
+
+
+    def run_scraper(self):
+        """Launches the scraper to update the database with new executive orders"""
+        try:
+            self.scraper = Scraper()
+            self.scraper.database = self.database
+
+            scraped_eos = self.scraper.eo_data
+            self.database.raw_eo_data = scraped_eos
+
+            for eo in scraped_eos:
+                self.database.store_eo(eo)
+
+            QMessageBox.information(self, "Scraper Finished", 
+                f"The scraper has finished running. Added {self.database.added_eos} new executive orders to the database.")
+            self.database.added_eos = 0  # reset counter
+            self.populate_table()
+        except Exception as e:
+            QMessageBox.critical(self, "Scraper Error", f"An error occurred while running the scraper: {e}")
+
+    def clear_results(self):
+        """Clears the results table and repopulates it with all executive orders"""
+        self.results_table.setRowCount(0)
+        self.populate_table()
 
     def populate_table(self):
         """Populates the results table with all executive orders from the database"""
-        cursor = self.database.con.execute("SELECT id, title, date FROM executive_orders")
-        rows = cursor.fetchall()
+        rows = self.database.full_database()
+        if not rows:
+            self.results_table.setRowCount(0)
+            return
+        
         self.results_table.setRowCount(len(rows))
         for row_idx, row_data in enumerate(rows):
-            for col_idx, item in enumerate(row_data):
-                self.results_table.setItem(row_idx, col_idx, QTableWidgetItem(str(item)))
+            entry_id = row_data[0]
+            title = row_data[1]
+            title = title.strip()
+            date = row_data[2]
+            self.results_table.setItem(row_idx, 0, QTableWidgetItem(str(entry_id)))
+            self.results_table.setItem(row_idx, 1, QTableWidgetItem(str(title)))
+            self.results_table.setItem(row_idx, 2, QTableWidgetItem(str(date)))
 
-    def show_details(self, id):
+    def show_details(self, eo_id):
         """Shows detailed information about a selected executive order"""
-        eo = self.database.search_by_id(id)
+        eo = self.database.get_formatted_data_from_id(eo_id)
         if eo:
-            detail_window = DetailViewer(eo)
-            detail_window.show()
+            detail_window = DetailViewer(self, eo)
+            detail_window.exec()
         else:
-            QMessageBox.warning(self, "Not Found", f"No executive order found with ID: {id}")
+            QMessageBox.warning(self, "Not Found", f"No executive order found with ID: {eo_id}")
 
     def perform_search(self):
         """Executes a requested search using the data within the search bar"""
-        criteria = self.search_input.text()
-        cursor = self.database.con.execute(f"SELECT id, title, date FROM executive_orders WHERE title LIKE '%{criteria}%' OR date LIKE '%{criteria}%' OR content LIKE '%{criteria}%' OR url LIKE '%{criteria}%' OR id LIKE '%{criteria}%'")
+        criteria = f"%{self.search_input.text()}%"
+        cursor = self.database.con.execute(f"SELECT id, title, date FROM executive_orders WHERE id LIKE ? OR title LIKE ? OR date LIKE ? OR content LIKE ? OR url LIKE ?",
+                                           (criteria, criteria, criteria, criteria, criteria))
         rows = cursor.fetchall()
         self.results_table.setRowCount(len(rows))
         for row_idx, row_data in enumerate(rows):
-            for col_idx, item in enumerate(row_data):
-                self.results_table.setItem(row_idx, col_idx, QTableWidgetItem(str(item)))
+            entry_id = row_data[0]
+            title = row_data[1]
+            title = title.strip()
+            date = row_data[2]
+            self.results_table.setItem(row_idx, 0, QTableWidgetItem(str(entry_id)))
+            self.results_table.setItem(row_idx, 1, QTableWidgetItem(str(title)))
+            self.results_table.setItem(row_idx, 2, QTableWidgetItem(str(date)))
 
-class DetailViewer(QWidget):
-    def __init__(self, eo_data):
-        super().__init__() # show as a new window
+class DetailViewer(QDialog):
+    def __init__(self, parent,eo_data):
+        super().__init__(parent)
         self.eo_id = eo_data["id"]
         self.eo_title = eo_data["title"]
         self.eo_date = eo_data["date"]
@@ -170,7 +282,7 @@ class DetailViewer(QWidget):
         self.setLayout(QVBoxLayout())
 
         self.title_label = QLabel(f"<b>Title:</b> {self.eo_title}")
-        self.date_label = QLabel(f"<b>Date published/listed:</b> {self.eo_date}")
+        self.date_label = QLabel(f"<b>Date:</b> {self.eo_date}")
         self.url_label = QLabel(f"<b>URL:</b> {self.eo_url}")
         self.content_area = QScrollArea()
         self.content_area.setWidgetResizable(True)
@@ -193,14 +305,16 @@ class DetailViewer(QWidget):
 
 ##*-*## Scraping classes & methods ##*-*##
 class Scraper:
-    def __init__(self, debug=False, safety_delays=True):
-        self.debug = debug
-        self.safety_delays = safety_delays
+    def __init__(self):
+        self.debug = config["debug_mode"]
+        self.safety_delays = config["safety_delays"]
 
         self.foundation_url = "https://www.whitehouse.gov/presidential-actions/executive-orders/"
         self.selected_url = None 
         self.eo_links = []
         self.eo_data = []
+
+        self.database = None # placeholder for database link
 
         if self.debug:
             signal.signal(signal.SIGINT, self.signal_handler)
@@ -208,30 +322,22 @@ class Scraper:
 
         try:
             asyncio.run(self.launch_scraper())
-        except KeyboardInterrupt:
-            print("\n!!! KeyboardInterrupt caught in main !!!")
-            self.save_progress()
         except Exception as e:
             print("An error occurred while scraping EO links: ", e)
             import traceback
             traceback.print_exc()
-            self.save_progress()
 
     def signal_handler(self, signum, frame):
         print(f"\n!!! Received signal {signum} from external source !!!")
         print(f"Frame: {frame}")
-        self.save_progress()
         sys.exit(1)
 
-    def save_progress(self):
-        print(f"Saving progress: {len(self.eo_data)} EOs scraped so far")
-        # Add file saving here later if needed
-
+        
     async def launch_scraper(self):
         """Launches a playwright browser instance for scraping"""
         async with Stealth().use_async(async_playwright()) as p:
             context = await p.chromium.launch_persistent_context(
-                user_data_dir = "./tmp/playwright_profile",
+                user_data_dir = config["playwright_tmp_dir"],
                 headless=False if self.debug else True,  
                 args = [
                     '--disable-blink-features=AutomationControlled',
@@ -352,7 +458,8 @@ class Scraper:
             soup = BeautifulSoup(content, "html.parser")
 
             title = soup.find("h1", class_="wp-block-whitehouse-topper__headline").text
-            date = soup.find("time").text
+            raw_date = soup.find("time").text
+            date = self.convert_date(raw_date)
             raw_content = [p.text for p in soup.find_all("p")]
             content = "\n".join(raw_content)
 
@@ -360,6 +467,7 @@ class Scraper:
             print(f"Scraped data for {url}: Title: {title}, Date: {date}")  
             
             self.eo_data.append({
+                "id": None,
                 "title": title,
                 "date": date,
                 "content": content,
@@ -369,11 +477,24 @@ class Scraper:
         except Exception as e:
             print(f"An error occurred while scraping data for {url}: {e}")
             self.eo_data.append({
+                "id": None,
                 "title": "N/A",
                 "date": "N/A",
                 "content": "N/A",
                 "url": url
             })
+
+    def convert_date(self, raw_date):
+        """
+        Converts a raw date string into YYYY-MM-DD format
+        """
+        try:
+            raw_date.strip()
+            date_obj = datetime.datetime.strptime(raw_date, "%B %d, %Y")
+            formatted_date = date_obj.strftime("%Y-%m-%d")
+            return formatted_date
+        except ValueError:
+            return raw_date  # return as-is if parsing fails
 
     def print_eo_data(self):
         """
@@ -390,19 +511,28 @@ class Scraper:
 
 ##*-*## Main execution ##*-*##
 def main():
-    print("Welcome! The script will now begin scraping executive orders from the White House website; then will launch a GUI viewer that allows you to filter and search the scraped data!")
+    try:
+        database = Database()
+        app = QApplication(sys.argv)
+        viewer = Viewer(database)
+        app.exec()
+    except KeyboardInterrupt:
+        print("\n\nShutdown requested - KeyboardInterrupt detected\n")
+        print("Closing database connection...")
+        database.close()
+        print("Database cleaned up, exiting now...")
+        sys.exit()
 
-    scraper = Scraper(debug=True, safety_delays=True)
-    database = Database()
-    scraped_eos = scraper.eo_data
-    database.raw_eo_data = scraped_eos
-    for eo in scraped_eos:
-        database.store_eo(eo)
+    except Exception as e:
+        print("An error occurred in the main application: ", e)
+        database.close()
+        sys.exit()
 
-    app = QApplication(sys.argv)
-    viewer = Viewer(database)
-    app.exec()
-
+    finally:
+        print("Closing database connection...")
+        database.close()
+        print("Database cleaned up, exiting now...")
+        sys.exit()
 
 if __name__ == "__main__":
     main()
