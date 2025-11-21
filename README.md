@@ -30,6 +30,22 @@ Check settings.py and customize any setting if needed or wanted (change database
 If the scraping process is randomly stopping in the middle of the process, try enabing the safety_timers if it's disabled. If it's already enabled and you still see the issue, try customizing the assigned user-agent within Scraper.launch_scraper() and see if that helps! If the issue persists please submit an Issue ticket so I can look into it!
 
 
+### Planned Features
+ - Text highlighting for search results (if search criteria is "taxes", any occurrences of the word "taxes" within the displayed results will be highlighted and marked)
+ - Result filtering
+    - date range
+    - category (if implemented)
+    - more options TBD
+ - Option to scrape and parse EOs from past administrations
+    - data.gov api
+ - Local LLM parsing
+    - Auto-generated categorization
+    - Maybe a chat feature depending on model to interact with the scraped data in natural language
+ - Direct database actions 
+    - DB settings section
+    - ability to remove individual (or selected range) of stored EOs
+ - *maybe* ability to scrape and parse laws as well?
+
 ### License
 Feel free to use, modify, distribute, etc, this script however you deem fit! It's licensed under the MIT license so there's no restrictions!
 

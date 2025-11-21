@@ -1,6 +1,10 @@
 """
 A script meant to scrape all executive orders directly from the white house website, and then parse them into an easily searchable dataframe
 """
+__version__ = "1.0.1"
+__author__ = "sylcrala"
+
+
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 import sqlite3
@@ -13,6 +17,7 @@ from os import mkdir
 from pathlib import Path
 from bs4 import BeautifulSoup
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -32,7 +37,26 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate
 )
 
-from settings import config
+##*-*## Configuration settings ##*-*##
+config = {
+
+    # Database configuration
+    "database_dir": "./data/",
+    "database_file": "storage.db",
+
+    # Scraper configuration
+    "playwright_tmp_dir": "./tmp/playwright_profile",
+
+    # Debug mode enables the chromium browser window to be visible during scraping
+    "debug_mode": False,
+
+    # Safety delays add random delays between requests to avoid bot detection and rate limiting
+    "safety_delays": False
+}
+
+
+
+
 
 ##*-*## Database classes & methods ##*-*##
 class Database:
@@ -185,7 +209,6 @@ class Viewer(QMainWindow):
         self.results_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.results_table.setWordWrap(True)
         self.results_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.results_table.verticalHeader().setVisible(False)
@@ -223,6 +246,7 @@ class Viewer(QMainWindow):
     def clear_results(self):
         """Clears the results table and repopulates it with all executive orders"""
         self.results_table.setRowCount(0)
+        self.search_input.clear()
         self.populate_table()
 
     def populate_table(self):
@@ -514,6 +538,26 @@ def main():
     try:
         database = Database()
         app = QApplication(sys.argv)
+        app.setStyle("Fusion")
+
+        # setting app color scheme
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(43, 43, 43))
+        palette.setColor(QPalette.WindowText, QColor(224, 224, 224))
+        palette.setColor(QPalette.Base, QColor(60, 60, 60))
+        palette.setColor(QPalette.AlternateBase, QColor(43, 43, 43))
+        palette.setColor(QPalette.ToolTipBase, QColor(224, 224, 224))
+        palette.setColor(QPalette.ToolTipText, QColor(224, 224, 224))
+        palette.setColor(QPalette.PlaceholderText, QColor(168, 160, 180))
+        palette.setColor(QPalette.Text, QColor(224, 224, 224))
+        palette.setColor(QPalette.Button, QColor(50, 50, 60))  
+        palette.setColor(QPalette.ButtonText, QColor(224, 224, 224))
+        palette.setColor(QPalette.Highlight, QColor(147, 51, 234)) 
+        palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+        palette.setColor(QPalette.Link, QColor(168, 85, 247))  
+        palette.setColor(QPalette.LinkVisited, QColor(96, 165, 250))  
+        app.setPalette(palette)
+
         viewer = Viewer(database)
         app.exec()
     except KeyboardInterrupt:
@@ -529,10 +573,11 @@ def main():
         sys.exit()
 
     finally:
-        print("Closing database connection...")
-        database.close()
-        print("Database cleaned up, exiting now...")
-        sys.exit()
+        if database:
+            print("Closing database connection...")
+            database.close()
+            print("Database cleaned up, exiting now...")
+            sys.exit()
 
 if __name__ == "__main__":
     main()
